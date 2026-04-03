@@ -1,0 +1,10 @@
+{"prompt": "Summarize the following article in one sentence.\n\nArticle: A new study published in Nature found that regular exercise reduces the risk of developing Alzheimer's disease by up to 40%. Researchers tracked 5,000 participants over ten years and found a clear correlation between physical activity levels and cognitive health.\n\nSummary:", "target": " Regular exercise can significantly reduce the risk of Alzheimer's disease."}
+{"prompt": "Classify the sentiment of the following review as Positive, Negative, or Neutral.\n\nReview: The food was excellent but the service was painfully slow.\n\nSentiment:", "target": " Neutral"}
+{"prompt": "Translate the following sentence to French.\n\nSentence: The quick brown fox jumps over the lazy dog.\n\nTranslation:", "target": " Le rapide renard brun saute par-dessus le chien paresseux."}
+{"prompt": "Answer the following question.\n\nQuestion: If a train travels at 60 mph for 2.5 hours, how far does it travel?\n\nAnswer:", "target": " The train travels 150 miles."}
+{"prompt": "Continue the following story in 2-3 sentences.\n\nStory: The astronaut floated weightlessly through the capsule, watching Earth grow smaller through the porthole. She had trained for this moment for fifteen years.\n\nContinuation:", "target": ""}
+{"prompt": "What is the capital of France?", "target": " The capital of France is Paris."}
+{"prompt": "Explain the concept of gradient descent in machine learning in one paragraph.", "target": ""}
+{"prompt": "Write a haiku about artificial intelligence.", "target": ""}
+{"prompt": "What are the three laws of thermodynamics? Provide a brief explanation of each.", "target": ""}
+{"prompt": "Describe the difference between supervised and unsupervised learning.", "target": ""}

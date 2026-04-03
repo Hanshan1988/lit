@@ -1,0 +1,210 @@
+/**
+ * CSS for the sequence salience module.
+ * Copy of client/modules/sequence_salience_module.css — kept in sync manually.
+ *
+ * To use: import into sequence_salience_module.ts as a LitElement CSS module,
+ * or reference it directly from the LIT TypeScript build.
+ */
+
+.flex-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.chip-container {
+  padding: 8px;
+}
+
+.pre-wrap {
+  white-space: pre-wrap;
+}
+
+.gray-text {
+  color: var(--lit-neutral-400);
+}
+
+.target-info-line {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-x: hidden;
+  line-height: 22px;
+  flex: 1;
+}
+
+lit-switch .icon-button {
+  vertical-align: middle;
+}
+
+select:invalid {
+  color: var(--lit-neutral-400);
+}
+
+/* Interstitial for target selection */
+.interstitial-container {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.interstitial-header {
+  font-size: 1.5em;
+  font-family: 'Google Sans', sans;
+  padding: 4px 2px;
+}
+
+.interstitial-contents {
+  width: 80%;
+  color: var(--lit-neutral-700);
+}
+
+.interstitial-target-option {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 6px;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.interstitial-target-type {
+  color: var(--lit-neutral-500);
+  padding: 4px;
+}
+
+.interstitial-target-option .interstitial-target-text {
+  flex-grow: 1;
+  flex-basis: 100%;
+  padding: 4px;
+  border: 1px solid var(--lit-neutral-300);
+  border-radius: 4px;
+  overflow: hidden;
+  min-height: 28px;
+  max-height: 34px;
+}
+
+.interstitial-target-option:hover .interstitial-target-text {
+  border: 1px solid var(--lit-neutral-400);
+  background-color: var(--lit-mintonal-p-1);
+}
+
+/* Module controls */
+.module-toolbar {
+  border-bottom: 1px solid #dadce0;
+  box-sizing: border-box;
+  justify-content: space-between;
+  line-height: 36px;
+  container-type: inline-size;
+}
+
+.module-container .module-toolbar:first-child {
+  z-index: 1;
+}
+
+.module-footer {
+  justify-content: space-between;
+  container-type: inline-size;
+}
+
+.controls-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0 4px;
+  gap: 4px;
+  height: 36px;
+}
+
+.controls-group[disabled] {
+  color: rgb(60, 64, 67);
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+.controls-group-variable {
+  flex: 1;
+  overflow-x: clip;
+  margin-right: 8px;
+}
+
+.flex-grow-spacer {
+  flex: 1;
+  margin: 0;
+}
+
+#change-target-button {
+  white-space: nowrap;
+  margin: 0;
+}
+
+#change-target-icon {
+  display: none;
+  mwc-icon { line-height: 36px; }
+}
+
+.vertical-separator {
+  background: #dadce0;
+  width: 2px;
+  height: 1.2rem;
+  padding: 0;
+  margin: 0 8px;
+}
+
+.module-footer-wrappable {
+  flex-wrap: wrap;
+  height: unset;
+  min-height: 36px;
+  line-height: 36px;
+}
+
+.module-footer > * { min-width: 0; }
+.controls-group > * { min-width: 0; }
+.controls-group label { white-space: nowrap; }
+
+@container (width < 745px) {
+  #method-label { display: none; }
+}
+
+@container (width < 685px) {
+  #change-target-button, #granularity-label, #colormap-slider-label { display: none; }
+  #change-target-icon { display: block; }
+}
+
+color-legend { margin-right: 16px; }
+
+/* Pending request indicator */
+.loading-indicator-container { position: relative; width: 100%; }
+
+@keyframes running-progress {
+  0%   { margin-left: 0;    width: 0; }
+  50%  { margin-left: 35%;  width: 65%; }
+  100% { margin-left: 100%; width: 0; }
+}
+
+.loading-indicator {
+  position: absolute;
+  top: -2px;
+  background-color: var(--lit-neutral-500);
+  width: 100%;
+  height: 2px;
+  animation: running-progress 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.regex-input-container {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+}
+
+.regex-input { max-width: 100px; }
+
+.error-input {
+  border-color: var(--google-red-600);
+  border-style: solid;
+  border-radius: 3px;
+  border-width: 2px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}

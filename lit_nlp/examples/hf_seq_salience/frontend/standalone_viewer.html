@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<!--
+  Standalone Sequence Salience Viewer
+  ====================================
+  A single-file HTML/CSS/JS frontend that connects to the LIT Python backend
+  and lets you explore gradient-based token salience for any causal LM.
+
+  USAGE:
+    1. Start the backend:
+         python -m lit_nlp.examples.hf_seq_salience.backend.server \
+             --model_id=Qwen/Qwen3-4B-Instruct-2507 --port=5432
+    2. Open this file in a browser, or serve it:
+         python -m http.server 8080
+       Then visit http://localhost:8080/standalone_viewer.html
+    3. Configure the server URL (default: http://localhost:5432) and click
+       "Connect".
+
+  HOW IT WORKS:
+    * Generate: calls /get_preds on the generative model to get a response.
+    * Tokenise: calls /get_preds on the tokenizer model to get a token list.
+    * Salience: calls /get_preds on the salience model with a target_mask to
+      get per-token grad_l2 and grad_dot_input scores.
+    * The token chips are coloured using a simple CSS linear-gradient heatmap.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sequence Salience Viewer</title>
+<style>
+  /* ── Reset / base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Google Sans', 'Roboto', system-ui, sans-serif;
+    font-size: 14px;
+    background: #f8f9fa;
+    color: #202124;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Top bar ── */
+  header {
+    background: #fff;
+    border-bottom: 1px solid #dadce0;
+    padding: 0 20px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  header h1 { font-size: 18px; font-weight: 600; color: #1a73e8; white-space: nowrap; }
+  header .conn-group { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 480px; }
+  header input[type=text] { flex: 1; padding: 5px 10px; border: 1px solid #dadce0; border-radius: 4px; font-size: 13px; }
+  button {
+    padding: 6px 14px;
+    border: 1px solid #dadce0;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background .15s;
+  }
+  button:hover { background: #f1f3f4; }
+  button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  button.primary:hover { background: #1558b0; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #status { font-size: 12px; color: #5f6368; white-space: nowrap; }
+
+  /* ── Main layout ── */
+  .layout { display: flex; flex: 1; min-height: 0; gap: 0; }
+
+  /* ── Sidebar ── */
+  aside {
+    width: 280px;
+    flex-shrink: 0;
+    background: #fff;
+    border-right: 1px solid #dadce0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  aside h2 { font-size: 13px; font-weight: 600; padding: 12px 14px 8px; color: #5f6368; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #dadce0; }
+  #example-list { overflow-y: auto; flex: 1; }
+  .example-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f1f3f4;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+  .example-item:hover { background: #f1f3f4; }
+  .example-item.selected { background: #e8f0fe; border-left: 3px solid #1a73e8; }
+
+  /* ── Right panel ── */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  /* ── Prompt section ── */
+  .section {
+    background: #fff;
+    border-bottom: 1px solid #dadce0;
+    padding: 14px 20px;
+    flex-shrink: 0;
+  }
+  .section h2 { font-size: 13px; font-weight: 600; color: #5f6368; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+  textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 8px 10px;
+    border: 1px solid #dadce0;
+    border-radius: 4px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    resize: vertical;
+    line-height: 1.5;
+  }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .row label { font-size: 13px; color: #5f6368; }
+  .row input[type=number] { width: 70px; padding: 5px 8px; border: 1px solid #dadce0; border-radius: 4px; font-size: 13px; }
+
+  /* ── Salience panel ── */
+  .salience-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .tokens-area {
+    background: #fff;
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .tokens-area .label-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .tokens-area .section-label { font-weight: 600; font-size: 13px; }
+  .tokens-area .hint { font-size: 12px; color: #5f6368; }
+
+  /* ── Controls for salience method ── */
+  .method-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .method-controls label { font-size: 13px; color: #5f6368; }
+  .method-btn {
+    padding: 4px 12px;
+    border-radius: 14px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid #dadce0;
+    background: #fff;
+    cursor: pointer;
+  }
+  .method-btn.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .intensity-row { display: flex; align-items: center; gap: 8px; }
+  .intensity-row input[type=range] { width: 100px; }
+  .intensity-row span { font-size: 12px; color: #5f6368; min-width: 30px; }
+
+  /* ── Token chips ── */
+  .token-chips { display: flex; flex-wrap: wrap; gap: 2px 0; line-height: 1.8; align-items: baseline; }
+
+  .tok {
+    display: inline-block;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    cursor: default;
+    transition: outline .1s;
+    white-space: pre-wrap;
+    position: relative;
+  }
+  .tok.context { cursor: default; }
+  .tok.response { cursor: pointer; }
+  .tok.response:hover { outline: 2px solid #1a73e8; outline-offset: -1px; }
+  .tok.response.selected { outline: 2px solid #e8710a; outline-offset: -1px; }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    background: #fff;
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    flex-wrap: wrap;
+  }
+  .legend .label { font-size: 12px; color: #5f6368; }
+  .legend-bar {
+    height: 14px;
+    width: 160px;
+    border-radius: 3px;
+    border: 1px solid #dadce0;
+  }
+  .legend-ticks { display: flex; justify-content: space-between; width: 160px; font-size: 11px; color: #5f6368; }
+
+  /* ── Loading spinner ── */
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #dadce0;
+    border-top-color: #1a73e8;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Error banner ── */
+  .error-banner {
+    background: #fce8e6;
+    color: #c5221f;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .empty-state { color: #5f6368; font-size: 13px; padding: 20px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<header>
+  <h1>🔬 Sequence Salience</h1>
+  <div class="conn-group">
+    <label for="server-url" style="white-space:nowrap;font-size:13px;color:#5f6368">Server:</label>
+    <input type="text" id="server-url" value="http://localhost:5432" placeholder="http://localhost:5432">
+    <button id="connect-btn" class="primary">Connect</button>
+  </div>
+  <span id="status">Not connected</span>
+</header>
+
+<!-- ── Main layout ── -->
+<div class="layout">
+
+  <!-- Sidebar: dataset examples -->
+  <aside>
+    <h2>Dataset Examples</h2>
+    <div id="example-list">
+      <div class="empty-state">Connect to a server to load examples.</div>
+    </div>
+  </aside>
+
+  <!-- Right: editor + salience -->
+  <main>
+    <!-- Prompt / target editor -->
+    <div class="section">
+      <h2>Prompt &amp; Target</h2>
+      <textarea id="prompt-input" placeholder="Enter a prompt here, or select an example from the sidebar…" rows="4"></textarea>
+      <textarea id="target-input" placeholder="Optional: reference target (leave blank to use generated response for salience)" rows="2" style="margin-top:6px;min-height:40px;"></textarea>
+      <div class="row">
+        <button id="generate-btn" class="primary" disabled>Generate</button>
+        <label>Max new tokens:</label>
+        <input type="number" id="max-tokens" value="128" min="1" max="2048">
+        <div id="gen-spinner" style="display:none"><span class="spinner"></span></div>
+        <div id="gen-error" class="error-banner" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Salience visualization -->
+    <div class="salience-panel" id="salience-panel">
+      <div class="empty-state" id="empty-state">Connect to the server and generate a response to begin.</div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ===========================================================================
+// Constants & state
+// ===========================================================================
+
+let SERVER_URL = 'http://localhost:5432';
+let META = null;         // server metadata from /get_info
+let MODEL_NAME = null;   // primary generative model name
+let DATASET_NAME = null; // first compatible dataset name
+let EXAMPLES = [];       // dataset examples (IndexedInput[])
+
+// Current session
+let currentIndexedInput = null; // IndexedInput for the prompt+target
+let allTokens = [];             // string[] from tokenizer model
+let promptTokenCount = 0;       // number of prompt tokens (for boundary)
+let selectedSpan = null;        // [start, end] in token space (null = nothing)
+let salienceMethod = 'grad_l2'; // 'grad_l2' | 'grad_dot_input'
+let salienceIntensity = 0.4;    // colormap gamma parameter
+
+// ===========================================================================
+// UI references
+// ===========================================================================
+const $serverUrl    = document.getElementById('server-url');
+const $connectBtn   = document.getElementById('connect-btn');
+const $status       = document.getElementById('status');
+const $exampleList  = document.getElementById('example-list');
+const $promptInput  = document.getElementById('prompt-input');
+const $targetInput  = document.getElementById('target-input');
+const $generateBtn  = document.getElementById('generate-btn');
+const $maxTokens    = document.getElementById('max-tokens');
+const $genSpinner   = document.getElementById('gen-spinner');
+const $genError     = document.getElementById('gen-error');
+const $saliencePanel = document.getElementById('salience-panel');
+const $emptyState   = document.getElementById('empty-state');
+
+// ===========================================================================
+// Utility: LIT REST API helpers
+// ===========================================================================
+
+/** MD5 (simplified): compute the LIT input hash for an example dict.
+ *  Replicates lib/caching.py input_hash() which does MD5(json_sorted_keys).
+ *  Uses SubtleCrypto (async) or a tiny synchronous fallback. */
+async function litInputHash(data) {
+  // Build a sorted-key JSON string exactly like Python's sort_keys=True.
+  const sortedJson = jsonSortedKeys(data);
+  const buf = new TextEncoder().encode(sortedJson);
+  const hashBuf = await crypto.subtle.digest('MD5', buf).catch(() => null);
+  if (hashBuf) {
+    return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+  // Fallback: MD5 is not available on some browsers via SubtleCrypto.
+  // Use a deterministic but non-standard placeholder and let /annotate_new_data
+  // assign the real hash.
+  return 'tmp_' + Math.random().toString(36).slice(2);
+}
+
+/** JSON stringify with sorted keys (recursively). */
+function jsonSortedKeys(obj) {
+  if (Array.isArray(obj)) return '[' + obj.map(jsonSortedKeys).join(',') + ']';
+  if (obj !== null && typeof obj === 'object') {
+    const keys = Object.keys(obj).sort();
+    const pairs = keys.map(k => JSON.stringify(k) + ':' + jsonSortedKeys(obj[k]));
+    return '{' + pairs.join(',') + '}';
+  }
+  return JSON.stringify(obj);
+}
+
+/** Create a properly indexed input by calling /annotate_new_data. */
+async function annotateInput(dataDict) {
+  const payload = { inputs: [{ id: '', data: dataDict, meta: { added: true, source: 'viewer', parentId: null } }] };
+  const resp = await fetch(`${SERVER_URL}/annotate_new_data?dataset_name=${encodeURIComponent(DATASET_NAME)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) throw new Error(`annotate_new_data: ${resp.status} ${await resp.text()}`);
+  const results = await resp.json();
+  return results[0]; // IndexedInput with proper id and data._id
+}
+
+/** Backend call: POST /get_preds */
+async function getPreds(indexedInputs, modelName, requestedTypes = '', requestedFields = '') {
+  const params = new URLSearchParams({
+    model: modelName,
+    dataset_name: DATASET_NAME,
+  });
+  if (requestedTypes) params.set('requested_types', requestedTypes);
+  if (requestedFields) params.set('requested_fields', requestedFields);
+
+  const resp = await fetch(`${SERVER_URL}/get_preds?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputs: indexedInputs }),
+  });
+  if (!resp.ok) throw new Error(`get_preds(${modelName}): ${resp.status} ${await resp.text()}`);
+  return resp.json();
+}
+
+// ===========================================================================
+// Connect to server
+// ===========================================================================
+
+async function connect() {
+  SERVER_URL = $serverUrl.value.replace(/\/$/, '');
+  $status.textContent = 'Connecting…';
+  $connectBtn.disabled = true;
+
+  try {
+    const resp = await fetch(`${SERVER_URL}/get_info`);
+    if (!resp.ok) throw new Error(`/get_info returned ${resp.status}`);
+    META = await resp.json();
+
+    // Find first generative model (not salience/tokenizer helper)
+    const allModels = Object.keys(META.models).filter(n => !n.startsWith('_'));
+    if (!allModels.length) throw new Error('No generative models found in server metadata.');
+    MODEL_NAME = allModels[0];
+
+    // Find a compatible dataset
+    const compatDatasets = META.models[MODEL_NAME].datasets || [];
+    DATASET_NAME = compatDatasets[0] || Object.keys(META.datasets)[0];
+    if (!DATASET_NAME) throw new Error('No datasets found.');
+
+    $status.textContent = `✓ Connected — model: "${MODEL_NAME}", dataset: "${DATASET_NAME}"`;
+    $generateBtn.disabled = false;
+    await loadExamples();
+  } catch (e) {
+    $status.textContent = `✗ Connection failed: ${e.message}`;
+    $connectBtn.disabled = false;
+  }
+  $connectBtn.disabled = false;
+}
+
+$connectBtn.addEventListener('click', connect);
+$serverUrl.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+
+// ===========================================================================
+// Load dataset examples
+// ===========================================================================
+
+async function loadExamples() {
+  $exampleList.innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading…</div>';
+  try {
+    const resp = await fetch(`${SERVER_URL}/get_dataset?dataset_name=${encodeURIComponent(DATASET_NAME)}`);
+    if (!resp.ok) throw new Error(resp.status);
+    EXAMPLES = await resp.json();
+    renderExampleList();
+  } catch (e) {
+    $exampleList.innerHTML = `<div class="error-banner">Failed to load dataset: ${e.message}</div>`;
+  }
+}
+
+function renderExampleList() {
+  if (!EXAMPLES.length) {
+    $exampleList.innerHTML = '<div class="empty-state">No examples loaded.</div>';
+    return;
+  }
+  $exampleList.innerHTML = '';
+  EXAMPLES.forEach((ex, i) => {
+    const el = document.createElement('div');
+    el.className = 'example-item';
+    el.textContent = ex.data.prompt || '(empty prompt)';
+    el.dataset.index = i;
+    el.addEventListener('click', () => selectExample(i));
+    $exampleList.appendChild(el);
+  });
+}
+
+function selectExample(i) {
+  document.querySelectorAll('.example-item').forEach((el, j) => {
+    el.classList.toggle('selected', j === i);
+  });
+  const ex = EXAMPLES[i];
+  $promptInput.value  = ex.data.prompt  || '';
+  $targetInput.value  = ex.data.target  || '';
+  currentIndexedInput = ex;
+  clearSalience();
+}
+
+// ===========================================================================
+// Generate
+// ===========================================================================
+
+$generateBtn.addEventListener('click', generate);
+
+async function generate() {
+  const prompt = $promptInput.value.trim();
+  if (!prompt) return;
+
+  showGenSpinner(true);
+  clearSalience();
+  showError('');
+
+  try {
+    // Annotate the input to get proper indexed input with matching id/_id.
+    const dataDict = { prompt, target: $targetInput.value || '' };
+    currentIndexedInput = await annotateInput(dataDict);
+
+    // Call the generative model.
+    const preds = await getPreds([currentIndexedInput], MODEL_NAME, 'GeneratedText');
+    const response = preds[0]?.response ?? '';
+
+    // Store the response in the target field for salience.
+    const responseTarget = $targetInput.value || response;
+
+    // Now update the indexed input to include prompt+response concatenation
+    // for the tokenizer/salience models.
+    const salienceData = { prompt, target: responseTarget };
+    currentIndexedInput = await annotateInput(salienceData);
+
+    // Tokenise to get token list & boundary.
+    await tokenizeAndRender(prompt, responseTarget);
+
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    showGenSpinner(false);
+  }
+}
+
+// ===========================================================================
+// Tokenise & render token chips
+// ===========================================================================
+
+async function tokenizeAndRender(prompt, target) {
+  // Get tokens from the tokenizer model.
+  const tokPreds = await getPreds([currentIndexedInput], `_${MODEL_NAME}_tokenizer`, 'Tokens');
+  allTokens = tokPreds[0]?.tokens ?? [];
+
+  // Find the boundary between prompt and target by tokenising prompt alone.
+  const promptOnly = await annotateInput({ prompt, target: '' });
+  const promptTokPreds = await getPreds([promptOnly], `_${MODEL_NAME}_tokenizer`, 'Tokens');
+  promptTokenCount = promptTokPreds[0]?.tokens?.length ?? 0;
+
+  selectedSpan = null;
+  renderSaliencePanel(null);
+}
+
+// ===========================================================================
+// Render salience panel
+// ===========================================================================
+
+function renderSaliencePanel(salienceScores) {
+  if (!allTokens.length) {
+    $saliencePanel.innerHTML = '<div class="empty-state">No tokens to display.</div>';
+    return;
+  }
+
+  $saliencePanel.innerHTML = '';
+
+  // Controls row
+  const ctrl = document.createElement('div');
+  ctrl.className = 'method-controls';
+  ctrl.innerHTML = `
+    <label>Salience method:</label>
+    <button class="method-btn ${salienceMethod === 'grad_l2' ? 'active' : ''}" data-method="grad_l2">Gradient L2</button>
+    <button class="method-btn ${salienceMethod === 'grad_dot_input' ? 'active' : ''}" data-method="grad_dot_input">Grad · Input</button>
+    <div class="intensity-row" style="margin-left:12px">
+      <label>Intensity:</label>
+      <input type="range" id="intensity-slider" min="0.05" max="1" step="0.05" value="${salienceIntensity}">
+      <span id="intensity-val">${salienceIntensity.toFixed(2)}</span>
+    </div>`;
+  ctrl.querySelectorAll('.method-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      salienceMethod = btn.dataset.method;
+      ctrl.querySelectorAll('.method-btn').forEach(b => b.classList.toggle('active', b.dataset.method === salienceMethod));
+      if (selectedSpan) await fetchAndRenderSalience();
+    });
+  });
+  ctrl.querySelector('#intensity-slider').addEventListener('input', e => {
+    salienceIntensity = +e.target.value;
+    ctrl.querySelector('#intensity-val').textContent = salienceIntensity.toFixed(2);
+    if (salienceScores) recolorTokens(salienceScores);
+  });
+  $saliencePanel.appendChild(ctrl);
+
+  // Tokens area
+  const box = document.createElement('div');
+  box.className = 'tokens-area';
+  const labelRow = document.createElement('div');
+  labelRow.className = 'label-row';
+  labelRow.innerHTML = `
+    <span class="section-label">Tokens</span>
+    <span class="hint">
+      ${selectedSpan ? `Explaining [${selectedSpan}]` : 'Click a <strong>response token</strong> to compute salience'}
+    </span>`;
+  box.appendChild(labelRow);
+
+  const chipsEl = document.createElement('div');
+  chipsEl.className = 'token-chips';
+  chipsEl.id = 'token-chips';
+
+  allTokens.forEach((tok, i) => {
+    const isResponse = i >= promptTokenCount;
+    const chip = document.createElement('span');
+    chip.className = `tok ${isResponse ? 'response' : 'context'}`;
+    // Display newlines visibly
+    chip.textContent = tok.replace('▁', ' ').replace(/\n/g, '↵\n');
+    chip.dataset.idx = i;
+    chip.title = `[${i}] ${JSON.stringify(tok)}`;
+
+    if (salienceScores) {
+      applyColor(chip, salienceScores[i], salienceMethod === 'grad_dot_input');
+    }
+
+    if (isResponse) {
+      chip.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const idx = +chip.dataset.idx;
+
+        if (selectedSpan === null) {
+          selectedSpan = [idx, idx + 1];
+        } else {
+          const [s, end_] = selectedSpan;
+          if (e.shiftKey) {
+            // Shift: extend span
+            if (idx < s) selectedSpan = [idx, end_];
+            else if (idx >= end_) selectedSpan = [s, idx + 1];
+          } else if (idx === s && end_ - s === 1) {
+            selectedSpan = null; // deselect single
+          } else {
+            selectedSpan = [idx, idx + 1]; // new single selection
+          }
+        }
+        document.querySelectorAll('.tok.selected').forEach(c => c.classList.remove('selected'));
+        if (selectedSpan) {
+          for (let j = selectedSpan[0]; j < selectedSpan[1]; j++) {
+            document.querySelector(`.tok[data-idx="${j}"]`)?.classList.add('selected');
+          }
+          await fetchAndRenderSalience();
+        } else {
+          renderSaliencePanel(null);
+        }
+      });
+    }
+    chipsEl.appendChild(chip);
+  });
+
+  box.appendChild(chipsEl);
+  $saliencePanel.appendChild(box);
+
+  // Legend
+  if (salienceScores) {
+    $saliencePanel.appendChild(buildLegend(salienceMethod === 'grad_dot_input'));
+  }
+
+  // Re-apply selection highlight
+  if (selectedSpan) {
+    for (let j = selectedSpan[0]; j < selectedSpan[1]; j++) {
+      document.querySelector(`.tok[data-idx="${j}"]`)?.classList.add('selected');
+    }
+  }
+}
+
+// ===========================================================================
+// Fetch salience scores from backend
+// ===========================================================================
+
+async function fetchAndRenderSalience() {
+  if (!selectedSpan || !currentIndexedInput) return;
+
+  const [start, end] = selectedSpan;
+  const targetMask = allTokens.map((_, i) => (i >= start && i < end) ? 1 : 0);
+
+  // Build a new indexed input with target_mask set.
+  const salienceDataDict = {
+    ...currentIndexedInput.data,
+    target_mask: targetMask,
+  };
+  // Remove _id so the annotator re-computes it for the new data.
+  delete salienceDataDict._id;
+
+  let salienceInput;
+  try {
+    salienceInput = await annotateInput(salienceDataDict);
+  } catch (e) {
+    showError(`Failed to prepare salience input: ${e.message}`);
+    return;
+  }
+
+  // Show loading state
+  const hint = document.querySelector('.label-row .hint');
+  if (hint) hint.innerHTML = `<span class="spinner"></span> Computing salience…`;
+
+  try {
+    const preds = await getPreds([salienceInput], `_${MODEL_NAME}_salience`, 'TokenScores');
+    const scores = preds[0]?.[salienceMethod] ?? preds[0]?.['grad_l2'] ?? [];
+    renderSaliencePanel(scores);
+  } catch (e) {
+    showError(`Salience computation failed: ${e.message}`);
+    const hint2 = document.querySelector('.label-row .hint');
+    if (hint2) hint2.innerHTML = `<span style="color:#c5221f">Error: ${e.message}</span>`;
+  }
+}
+
+// ===========================================================================
+// Color helpers
+// ===========================================================================
+
+/** Apply background color to a token chip based on its salience score. */
+function applyColor(chip, score, signed) {
+  if (score === undefined || score === null) return;
+  // Normalise to [-1, 1] range using the intensity setting.
+  const gamma = salienceIntensity;
+  if (signed) {
+    // grad_dot_input: negative = pink/red, positive = green
+    const norm = Math.tanh(score / (gamma + 1e-6));
+    if (norm >= 0) {
+      const g = Math.round(norm * 180);
+      chip.style.background = `rgba(0,${g+60},0,${Math.abs(norm).toFixed(2)})`;
+    } else {
+      const r = Math.round(-norm * 200);
+      chip.style.background = `rgba(${r+80},0,0,${Math.abs(norm).toFixed(2)})`;
+    }
+  } else {
+    // grad_l2: unsigned, maps 0 → white, high → purple
+    const norm = Math.tanh(score / (gamma + 1e-6));
+    const r = Math.round(255 - norm * 120);
+    const g = Math.round(255 - norm * 200);
+    const b = Math.round(255 - norm * 30);
+    chip.style.background = `rgb(${r},${g},${b})`;
+  }
+}
+
+/** Re-apply colors to all token chips when intensity changes. */
+function recolorTokens(scores) {
+  document.querySelectorAll('.tok').forEach(chip => {
+    const i = +chip.dataset.idx;
+    chip.style.background = '';
+    if (i < scores.length) applyColor(chip, scores[i], salienceMethod === 'grad_dot_input');
+  });
+}
+
+/** Build the color legend bar. */
+function buildLegend(signed) {
+  const div = document.createElement('div');
+  div.className = 'legend';
+  const canvas = document.createElement('canvas');
+  canvas.className = 'legend-bar';
+  canvas.width = 160;
+  canvas.height = 14;
+  const ctx = canvas.getContext('2d');
+  if (signed) {
+    const grad = ctx.createLinearGradient(0, 0, 160, 0);
+    grad.addColorStop(0, 'rgba(200,0,0,0.85)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,1)');
+    grad.addColorStop(1, 'rgba(0,180,0,0.85)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 160, 14);
+    div.innerHTML = `<span class="label">Influence</span>`;
+    div.appendChild(canvas);
+    const ticks = document.createElement('div');
+    ticks.className = 'legend-ticks';
+    ticks.innerHTML = '<span>Negative</span><span>Neutral</span><span>Positive</span>';
+    div.appendChild(ticks);
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, 160, 0);
+    grad.addColorStop(0, 'rgb(255,255,255)');
+    grad.addColorStop(1, 'rgb(135,55,225)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 160, 14);
+    div.innerHTML = `<span class="label">Salience (L2)</span>`;
+    div.appendChild(canvas);
+    const ticks = document.createElement('div');
+    ticks.className = 'legend-ticks';
+    ticks.innerHTML = '<span>Low</span><span>High</span>';
+    div.appendChild(ticks);
+  }
+  return div;
+}
+
+// ===========================================================================
+// UI helpers
+// ===========================================================================
+
+function clearSalience() {
+  allTokens = [];
+  promptTokenCount = 0;
+  selectedSpan = null;
+  $saliencePanel.innerHTML = '<div class="empty-state" id="empty-state">Generate a response to begin exploring salience.</div>';
+}
+
+function showGenSpinner(show) {
+  $genSpinner.style.display = show ? 'block' : 'none';
+  $generateBtn.disabled = show;
+}
+
+function showError(msg) {
+  $genError.textContent = msg;
+  $genError.style.display = msg ? 'block' : 'none';
+}
+
+// ===========================================================================
+// Wire up prompt textarea → clear salience on edit
+// ===========================================================================
+$promptInput.addEventListener('input', () => {
+  currentIndexedInput = null;
+  clearSalience();
+});
+$targetInput.addEventListener('input', () => {
+  currentIndexedInput = null;
+  clearSalience();
+});
+</script>
+</body>
+</html>
